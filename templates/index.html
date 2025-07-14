@@ -2,6 +2,14 @@
 <html>
 <head>
     <title>이미지 ZIP 다운로더</title>
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="icon" href="{{ url_for('static', filename='icon-192.png') }}">
+<meta name="theme-color" content="#000000">
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register("/static/service-worker.js");
+  }
+</script>
 </head>
 <body>
     <h2>이미지 ZIP 다운로더</h2>
