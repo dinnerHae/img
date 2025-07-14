@@ -3,6 +3,7 @@ import os
 import requests
 from zipfile import ZipFile
 from urllib.parse import urlparse
+from io import BytesIO
 
 app = Flask(__name__)
 
@@ -42,18 +43,27 @@ def index():
                 print(f"다운로드 실패 ({url}): {e}")
                 continue
 
-        zip_path = "static/result.zip"
-        with ZipFile(zip_path, 'w') as zipf:
+        # 메모리 위에 ZIP 파일 만들기
+        zip_buffer = BytesIO()
+        with ZipFile(zip_buffer, 'w') as zipf:
             for file in os.listdir(folder):
                 zipf.write(os.path.join(folder, file), arcname=file)
 
+        # cleanup
         for file in os.listdir(folder):
             os.remove(os.path.join(folder, file))
         os.rmdir(folder)
 
-        return render_template("index.html", download_link=zip_path)
+        zip_buffer.seek(0)
+        return send_file(
+            zip_buffer,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name='images.zip'
+        )
 
     return render_template("index.html")
-
+    
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=True, host="0.0.0.0", port=port)
