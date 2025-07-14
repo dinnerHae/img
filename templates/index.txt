@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>이미지 ZIP 다운로더</title>
+</head>
+<body>
+    <h2>이미지 ZIP 다운로더</h2>
+    <form method="post">
+        이미지 주소 형식 (예: site.com/###.jpg):<br>
+        <input type="text" name="url_format"><br><br>
+        시작 숫자: <input type="number" name="start"><br>
+        끝 숫자: <input type="number" name="end"><br><br>
+        <input type="submit" value="다운로드 시작">
+    </form>
+    {% if download_link %}
+    <p>✅ 압축 완료: <a href="{{ download_link }}" download>ZIP 다운로드</a></p>
+    {% endif %}
+</body>
+</html>
