@@ -31,14 +31,14 @@
   </style>
   <script>
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register("/static/service-worker.js?v=3");
+      navigator.serviceWorker.register("/static/service-worker.js?v=4");
     }
   </script>
 </head>
 <body>
   <div class="container">
     <h1>이미지 ZIP 다운로더</h1>
-    <p class="desc">여러 개의 작업(1,2,3,…)을 한 번에 입력하고, <b>작업별 ZIP</b>으로 저장합니다. 주소 형식에서는 숫자 자리에 <code>###</code>를 넣으세요.</p>
+    <p class="desc">작업별로 ZIP 파일명을 직접 정할 수 있습니다. 비워두면 기본(result_taskN.zip)으로 저장됩니다.</p>
     <form id="download-form">
       <div id="tasks">
         <div class="task">
@@ -49,6 +49,8 @@
           <input type="number" name="start[]" required />
           <label>끝 숫자</label>
           <input type="number" name="end[]" required />
+          <label>ZIP 파일명 (선택, 예: mypics.zip)</label>
+          <input type="text" name="zipname[]" placeholder="비워두면 result_taskN.zip" />
           <div class="actions"><button type="button" class="danger remove-btn" style="display:none;">- 제거</button></div>
         </div>
       </div>
@@ -56,7 +58,7 @@
         <button type="button" id="add-btn">+ 작업 추가</button>
         <button type="submit">다운로드 시작</button>
       </div>
-      <div class="hint">※ 예) <code>https://site.com/pic_###.png</code>, 시작 1, 끝 10 → pic_1.png ~ pic_10.png</div>
+      <div class="hint">※ 주소는 반드시 ### 를 포함해야 합니다. ZIP 파일명을 직접 정할 수 있습니다.</div>
       <div id="error" class="error"></div>
     </form>
 
@@ -100,6 +102,8 @@
           '<input type="number" name="start[]" required />' +
           '<label>끝 숫자</label>' +
           '<input type="number" name="end[]" required />' +
+          '<label>ZIP 파일명 (선택, 예: mypics.zip)</label>' +
+          '<input type="text" name="zipname[]" placeholder="비워두면 result_taskN.zip" />' +
           '<div class="actions"><button type="button" class="danger remove-btn">- 제거</button></div>';
         return div;
       }
@@ -131,7 +135,6 @@
               if ((data.percent || 0) < 100) {
                 setTimeout(poll, 700);
               } else {
-                // Get list of expected zips from server
                 fetch('/expected-zips')
                   .then(function(r){ return r.json(); })
                   .then(function(j){
@@ -139,7 +142,7 @@
                     downloadList.style.display = 'block';
                     var html = '<p>✅ 작업 완료! ZIP 파일을 내려받으세요.</p>';
                     if (!zips.length) {
-                      html += '<p>생성된 ZIP이 없습니다. 입력값을 확인하세요.</p>';
+                      html += '<p>생성된 ZIP이 없습니다.</p>';
                     } else {
                       for (var i = 0; i < zips.length; i++) {
                         var href = '/static/' + zips[i];
@@ -180,7 +183,7 @@
           })
           .catch(function(err){
             errorBox.style.display = 'block';
-            errorBox.textContent = '요청 중 오류가 발생했습니다: ' + (err && err.message ? err.message : err);
+            errorBox.textContent = '요청 중 오류 발생: ' + (err && err.message ? err.message : err);
             console.error(err);
           });
       });
