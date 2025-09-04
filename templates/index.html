@@ -27,10 +27,11 @@
     .download-list a { display:block; margin:6px 0; text-decoration:none; font-weight:600; color:#007bff; }
     .download-list a:hover { text-decoration:underline; }
     .hint { font-size:12px; color:#888; margin-top:6px; }
+    .error { color:#b00020; margin-top:10px; font-size:13px; display:none; }
   </style>
   <script>
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register("/static/service-worker.js");
+      navigator.serviceWorker.register("/static/service-worker.js?v=3");
     }
   </script>
 </head>
@@ -41,13 +42,14 @@
     <form id="download-form">
       <div id="tasks">
         <div class="task">
-          <div style="font-weight:700;">1번 작업</div>
+          <div class="task-title" style="font-weight:700;">1번 작업</div>
           <label>사이트 주소 형식 (예: https://example.com/img_###.jpg)</label>
           <input type="text" name="url_format[]" required />
           <label>시작 숫자</label>
           <input type="number" name="start[]" required />
           <label>끝 숫자</label>
           <input type="number" name="end[]" required />
+          <div class="actions"><button type="button" class="danger remove-btn" style="display:none;">- 제거</button></div>
         </div>
       </div>
       <div class="actions">
@@ -55,6 +57,7 @@
         <button type="submit">다운로드 시작</button>
       </div>
       <div class="hint">※ 예) <code>https://site.com/pic_###.png</code>, 시작 1, 끝 10 → pic_1.png ~ pic_10.png</div>
+      <div id="error" class="error"></div>
     </form>
 
     <div id="progress-container">
@@ -66,80 +69,124 @@
   </div>
 
   <script>
-    const tasksEl = document.getElementById('tasks');
-    const addBtn = document.getElementById('add-btn');
-    const form = document.getElementById('download-form');
-    const progressContainer = document.getElementById('progress-container');
-    const progressBar = document.getElementById('progress-bar');
-    const progressText = document.getElementById('progress-text');
-    const downloadList = document.getElementById('download-list');
+    (function(){
+      var tasksEl = document.getElementById('tasks');
+      var addBtn = document.getElementById('add-btn');
+      var form = document.getElementById('download-form');
+      var progressContainer = document.getElementById('progress-container');
+      var progressBar = document.getElementById('progress-bar');
+      var progressText = document.getElementById('progress-text');
+      var downloadList = document.getElementById('download-list');
+      var errorBox = document.getElementById('error');
 
-    function renumberTasks() {
-      const taskCards = tasksEl.querySelectorAll('.task');
-      taskCards.forEach((card, idx) => {
-        card.querySelector('div').textContent = (idx+1) + '번 작업';
-      });
-    }
+      function renumberTasks() {
+        var cards = tasksEl.getElementsByClassName('task');
+        for (var i = 0; i < cards.length; i++) {
+          var title = cards[i].getElementsByClassName('task-title')[0];
+          if (title) title.textContent = (i+1) + '번 작업';
+          var removeBtn = cards[i].getElementsByClassName('remove-btn')[0];
+          if (removeBtn) removeBtn.style.display = (i === 0 ? 'none' : 'inline-block');
+        }
+      }
 
-    addBtn.addEventListener('click', () => {
-      const div = document.createElement('div');
-      div.className = 'task';
-      div.innerHTML = \`
-        <div style="font-weight:700;"></div>
-        <label>사이트 주소 형식 (예: https://example.com/img_###.jpg)</label>
-        <input type="text" name="url_format[]" required />
-        <label>시작 숫자</label>
-        <input type="number" name="start[]" required />
-        <label>끝 숫자</label>
-        <input type="number" name="end[]" required />
-        <div class="actions"><button type="button" class="danger remove-btn">- 제거</button></div>
-      \`;
-      tasksEl.appendChild(div);
-      renumberTasks();
-      div.querySelector('.remove-btn')?.addEventListener('click', () => {
-        div.remove();
+      function makeTaskCard() {
+        var div = document.createElement('div');
+        div.className = 'task';
+        div.innerHTML =
+          '<div class="task-title" style="font-weight:700;"></div>' +
+          '<label>사이트 주소 형식 (예: https://example.com/img_###.jpg)</label>' +
+          '<input type="text" name="url_format[]" required />' +
+          '<label>시작 숫자</label>' +
+          '<input type="number" name="start[]" required />' +
+          '<label>끝 숫자</label>' +
+          '<input type="number" name="end[]" required />' +
+          '<div class="actions"><button type="button" class="danger remove-btn">- 제거</button></div>';
+        return div;
+      }
+
+      addBtn.addEventListener('click', function(){
+        var card = makeTaskCard();
+        tasksEl.appendChild(card);
         renumberTasks();
       });
-    });
 
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      progressContainer.style.display = 'block';
-      progressBar.value = 0;
-      progressText.textContent = '0%';
-      downloadList.style.display = 'none';
-      downloadList.innerHTML = '';
+      tasksEl.addEventListener('click', function(e){
+        var t = e.target || e.srcElement;
+        if (t && t.classList.contains('remove-btn')) {
+          var card = t.closest('.task');
+          if (card) {
+            card.parentNode.removeChild(card);
+            renumberTasks();
+          }
+        }
+      });
 
-      const formData = new FormData(form);
-      const taskCount = tasksEl.querySelectorAll('.task').length;
+      function startProgressPolling() {
+        function poll(){
+          fetch('/progress')
+            .then(function(res){ return res.json(); })
+            .then(function(data){
+              progressBar.value = data.percent || 0;
+              progressText.textContent = (data.percent || 0) + '%';
+              if ((data.percent || 0) < 100) {
+                setTimeout(poll, 700);
+              } else {
+                // Get list of expected zips from server
+                fetch('/expected-zips')
+                  .then(function(r){ return r.json(); })
+                  .then(function(j){
+                    var zips = j.zips || [];
+                    downloadList.style.display = 'block';
+                    var html = '<p>✅ 작업 완료! ZIP 파일을 내려받으세요.</p>';
+                    if (!zips.length) {
+                      html += '<p>생성된 ZIP이 없습니다. 입력값을 확인하세요.</p>';
+                    } else {
+                      for (var i = 0; i < zips.length; i++) {
+                        var href = '/static/' + zips[i];
+                        html += '<a href="' + href + '" download>' + zips[i] + ' 다운로드</a>';
+                      }
+                    }
+                    downloadList.innerHTML = html;
+                    progressText.textContent = '✅ 완료!';
+                  });
+              }
+            })
+            .catch(function(err){
+              console.error(err);
+              setTimeout(poll, 1000);
+            });
+        }
+        setTimeout(poll, 700);
+      }
 
-      fetch('/start-download', { method: 'POST', body: formData })
-        .then(() => {
-          // Start polling progress
-          const poll = () => {
-            fetch('/progress')
-              .then(res => res.json())
-              .then(data => {
-                progressBar.value = data.percent;
-                progressText.textContent = data.percent + '%';
-                if (data.percent < 100) {
-                  setTimeout(poll, 600);
-                } else {
-                  // Build links for each task ZIP
-                  downloadList.style.display = 'block';
-                  let html = '<p>✅ 작업 완료! ZIP 파일을 내려받으세요.</p>';
-                  for (let i = 1; i <= taskCount; i++) {
-                    const href = \`/static/result_task\${i}.zip\`;
-                    html += \`<a href="\${href}" download>result_task\${i}.zip 다운로드</a>\`;
-                  }
-                  downloadList.innerHTML = html;
-                  progressText.textContent = '✅ 완료!';
-                }
-              });
-          };
-          setTimeout(poll, 600);
-        });
-    });
+      form.addEventListener('submit', function(e){
+        e.preventDefault();
+        errorBox.style.display = 'none';
+        errorBox.textContent = '';
+        progressContainer.style.display = 'block';
+        progressBar.value = 0;
+        progressText.textContent = '0%';
+        downloadList.style.display = 'none';
+        downloadList.innerHTML = '';
+
+        var formData = new FormData(form);
+
+        fetch('/start-download', { method: 'POST', body: formData })
+          .then(function(res){
+            if (!res.ok) {
+              throw new Error('요청 실패: ' + res.status);
+            }
+            startProgressPolling();
+          })
+          .catch(function(err){
+            errorBox.style.display = 'block';
+            errorBox.textContent = '요청 중 오류가 발생했습니다: ' + (err && err.message ? err.message : err);
+            console.error(err);
+          });
+      });
+
+      renumberTasks();
+    })();
   </script>
 </body>
 </html>
