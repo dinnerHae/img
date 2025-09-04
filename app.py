@@ -24,15 +24,18 @@ def start_download():
     url_formats = request.form.getlist('url_format[]')
     starts = request.form.getlist('start[]')
     ends = request.form.getlist('end[]')
+    zipnames = request.form.getlist('zipname[]')
 
     if not url_formats:
         uf = request.form.get('url_format', '').strip()
         st = request.form.get('start', '').strip()
         en = request.form.get('end', '').strip()
+        zn = request.form.get('zipname', '').strip()
         if uf and st and en:
             url_formats = [uf]
             starts = [st]
             ends = [en]
+            zipnames = [zn]
 
     tasks = []
     for i in range(len(url_formats)):
@@ -46,12 +49,25 @@ def start_download():
             continue
         if s > e:
             s, e = e, s
-        tasks.append({"idx": len(tasks)+1, "url_format": uf, "start": s, "end": e})
+
+        zn = (zipnames[i] if i < len(zipnames) else "").strip()
+        if zn and not zn.lower().endswith(".zip"):
+            zn += ".zip"
+        if not zn:
+            zn = f"result_task{len(tasks)+1}.zip"
+
+        tasks.append({
+            "idx": len(tasks)+1,
+            "url_format": uf,
+            "start": s,
+            "end": e,
+            "zipname": zn
+        })
 
     os.makedirs("static", exist_ok=True)
 
     global expected_zips
-    expected_zips = [f"result_task{t['idx']}.zip" for t in tasks] if tasks else []
+    expected_zips = [t["zipname"] for t in tasks]
 
     def download_and_zip_all(tasks_local):
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -68,6 +84,7 @@ def start_download():
             start = t["start"]
             end = t["end"]
             idx = t["idx"]
+            zipname = t["zipname"]
             if not url_format.startswith("http"):
                 url_format = "https://" + url_format
 
@@ -98,7 +115,7 @@ def start_download():
                 for future in as_completed(futures):
                     pass
 
-            zip_path = os.path.join("static", f"result_task{idx}.zip")
+            zip_path = os.path.join("static", zipname)
             zip_buffer = BytesIO()
             with ZipFile(zip_buffer, 'w') as zipf:
                 for file in sorted(os.listdir(folder)):
