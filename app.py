@@ -8,43 +8,67 @@ from threading import Thread
 
 app = Flask(__name__)
 progress_data = {"percent": 0}
+expected_zips = []  # list of zip filenames to expose to client
 
 @app.route('/')
 def index():
     return render_template("index.html")
 
+@app.route('/expected-zips')
+def expected():
+    return jsonify({"zips": expected_zips})
+
 @app.route('/start-download', methods=['POST'])
 def start_download():
-    # Receive arrays for multiple tasks
+    # Accept both array-style and single inputs
     url_formats = request.form.getlist('url_format[]')
     starts = request.form.getlist('start[]')
     ends = request.form.getlist('end[]')
 
-    # Build task list
+    if not url_formats:
+        # fallback to single names
+        uf = request.form.get('url_format', '').strip()
+        st = request.form.get('start', '').strip()
+        en = request.form.get('end', '').strip()
+        if uf and st and en:
+            url_formats = [uf]
+            starts = [st]
+            ends = [en]
+
     tasks = []
     for i in range(len(url_formats)):
-        if not url_formats[i].strip():
+        uf = (url_formats[i] or '').strip()
+        if not uf:
             continue
-        tasks.append({
-            "idx": i + 1,  # 1-based for filenames
-            "url_format": url_formats[i].strip(),
-            "start": int(starts[i]),
-            "end": int(ends[i])
-        })
+        try:
+            s = int(starts[i])
+            e = int(ends[i])
+        except Exception:
+            continue
+        if s > e:
+            s, e = e, s  # normalize
+        tasks.append({"idx": len(tasks)+1, "url_format": uf, "start": s, "end": e})
 
-    # Ensure static dir
+    # Ensure static dir exists for outputs
     os.makedirs("static", exist_ok=True)
 
-    def download_and_zip_all():
+    # Build expected zips for UI
+    global expected_zips
+    expected_zips = [f"result_task{t['idx']}.zip" for t in tasks] if tasks else []
+
+    def download_and_zip_all(tasks_local):
         headers = {"User-Agent": "Mozilla/5.0"}
 
-        total_images = 0
-        for t in tasks:
-            total_images += (t["end"] - t["start"] + 1)
+        total_images = sum((t["end"] - t["start"] + 1) for t in tasks_local)
         done_images = 0
         progress_data["percent"] = 0
 
-        for t in tasks:
+        # If nothing to do, just finish cleanly to unblock UI
+        if total_images <= 0 or not tasks_local:
+            progress_data["percent"] = 100
+            return
+
+        for t in tasks_local:
             url_format = t["url_format"]
             start = t["start"]
             end = t["end"]
@@ -53,14 +77,13 @@ def start_download():
             if not url_format.startswith("http"):
                 url_format = "https://" + url_format
 
-            # Working folder per task
             folder = f"downloaded_images_task{idx}"
             os.makedirs(folder, exist_ok=True)
 
             for i in range(start, end + 1):
                 url = url_format.replace("###", str(i))
                 try:
-                    res = requests.get(url, headers=headers, timeout=7)
+                    res = requests.get(url, headers=headers, timeout=10)
                     res.raise_for_status()
 
                     path = urlparse(url).path
@@ -75,10 +98,9 @@ def start_download():
                     print(f"[task{idx}] 다운로드 실패 ({url}): {e}")
                 finally:
                     done_images += 1
-                    if total_images > 0:
-                        progress_data["percent"] = int((done_images / total_images) * 100)
+                    progress_data["percent"] = max(0, min(100, int((done_images / total_images) * 100)))
 
-            # Make ZIP for this task
+            # Build zip
             zip_path = os.path.join("static", f"result_task{idx}.zip")
             zip_buffer = BytesIO()
             with ZipFile(zip_buffer, 'w') as zipf:
@@ -90,17 +112,27 @@ def start_download():
 
             # Cleanup
             for file in os.listdir(folder):
-                os.remove(os.path.join(folder, file))
-            os.rmdir(folder)
+                try:
+                    os.remove(os.path.join(folder, file))
+                except Exception:
+                    pass
+            try:
+                os.rmdir(folder)
+            except Exception:
+                pass
 
         progress_data["percent"] = 100
 
-    Thread(target=download_and_zip_all).start()
+    Thread(target=download_and_zip_all, args=(tasks,)).start()
     return '', 204
 
 @app.route('/progress')
 def progress():
     return jsonify({"percent": progress_data["percent"]})
+
+@app.route('/health')
+def health():
+    return jsonify({"ok": True})
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
