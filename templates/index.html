@@ -8,77 +8,25 @@
   <link rel="icon" href="{{ url_for('static', filename='icon-192.png') }}">
   <meta name="theme-color" content="#000000" />
   <style>
-    body {
-      font-family: 'Segoe UI', sans-serif;
-      padding: 20px;
-      margin: 0;
-      background: #f5f5f5;
-      color: #333;
-    }
-    .container {
-      max-width: 480px;
-      margin: auto;
-      background: white;
-      padding: 20px;
-      border-radius: 12px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-    }
-    h1 {
-      font-size: 24px;
-      text-align: center;
-      margin-bottom: 20px;
-    }
-    label {
-      display: block;
-      margin-top: 15px;
-      font-weight: bold;
-    }
-    input[type="text"], input[type="number"] {
-      width: 100%;
-      padding: 12px;
-      margin-top: 5px;
-      border: 1px solid #ccc;
-      border-radius: 8px;
-      box-sizing: border-box;
-    }
-    button {
-      margin-top: 20px;
-      width: 100%;
-      padding: 14px;
-      background: #007bff;
-      color: white;
-      font-weight: bold;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-    }
-    button:hover {
-      background: #0056b3;
-    }
-    .download-link {
-      margin-top: 20px;
-      text-align: center;
-    }
-    .download-link a {
-      color: #007bff;
-      font-weight: bold;
-      text-decoration: none;
-    }
-    .download-link a:hover {
-      text-decoration: underline;
-    }
-    #progress-container {
-      margin-top: 20px;
-      display: none;
-    }
-    progress {
-      width: 100%;
-      height: 24px;
-    }
-    #progress-text {
-      text-align: center;
-      margin-top: 8px;
-    }
+    body { font-family: 'Segoe UI', sans-serif; padding: 20px; margin: 0; background: #f5f5f5; color: #333; }
+    .container { max-width: 560px; margin: auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    h1 { font-size: 24px; text-align: center; margin-bottom: 12px; }
+    .desc { color:#666; font-size: 14px; text-align:center; margin-bottom: 16px; }
+    label { display:block; margin-top: 10px; font-weight: bold; }
+    input[type="text"], input[type="number"] { width: 100%; padding: 10px; margin-top: 6px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+    .task { background:#fafafa; border:1px solid #e5e5e5; border-radius:10px; padding:12px; margin-top:14px; }
+    .actions { display:flex; gap:8px; margin-top:14px; }
+    button { padding: 12px 14px; background:#007bff; color:#fff; font-weight:600; border:none; border-radius:8px; cursor:pointer; }
+    button.secondary { background:#555; }
+    button.danger { background:#c0392b; }
+    button:hover { filter:brightness(0.95); }
+    #progress-container { margin-top: 20px; display:none; }
+    progress { width: 100%; height: 24px; }
+    #progress-text { text-align:center; margin-top:8px; }
+    .download-list { margin-top:16px; }
+    .download-list a { display:block; margin:6px 0; text-decoration:none; font-weight:600; color:#007bff; }
+    .download-list a:hover { text-decoration:underline; }
+    .hint { font-size:12px; color:#888; margin-top:6px; }
   </style>
   <script>
     if ('serviceWorker' in navigator) {
@@ -89,17 +37,24 @@
 <body>
   <div class="container">
     <h1>이미지 ZIP 다운로더</h1>
+    <p class="desc">여러 개의 작업(1,2,3,…)을 한 번에 입력하고, <b>작업별 ZIP</b>으로 저장합니다. 주소 형식에서는 숫자 자리에 <code>###</code>를 넣으세요.</p>
     <form id="download-form">
-      <label>사이트 주소 형식 (예: https://www.###.com)</label>
-      <input type="text" name="url_format" required />
-
-      <label>시작 숫자</label>
-      <input type="number" name="start" required />
-
-      <label>끝 숫자</label>
-      <input type="number" name="end" required />
-
-      <button type="submit">다운로드 시작</button>
+      <div id="tasks">
+        <div class="task">
+          <div style="font-weight:700;">1번 작업</div>
+          <label>사이트 주소 형식 (예: https://example.com/img_###.jpg)</label>
+          <input type="text" name="url_format[]" required />
+          <label>시작 숫자</label>
+          <input type="number" name="start[]" required />
+          <label>끝 숫자</label>
+          <input type="number" name="end[]" required />
+        </div>
+      </div>
+      <div class="actions">
+        <button type="button" id="add-btn">+ 작업 추가</button>
+        <button type="submit">다운로드 시작</button>
+      </div>
+      <div class="hint">※ 예) <code>https://site.com/pic_###.png</code>, 시작 1, 끝 10 → pic_1.png ~ pic_10.png</div>
     </form>
 
     <div id="progress-container">
@@ -107,50 +62,83 @@
       <p id="progress-text">0%</p>
     </div>
 
-    <div class="download-link" id="download-link" style="display:none;">
-      <p>✅ 완료! 👉 <a id="download-url" href="/static/result.zip" download>ZIP 파일 다운로드</a></p>
-    </div>
+    <div class="download-list" id="download-list" style="display:none;"></div>
   </div>
 
   <script>
-    const form = document.getElementById("download-form");
-    const progressBar = document.getElementById("progress-bar");
-    const progressText = document.getElementById("progress-text");
-    const progressContainer = document.getElementById("progress-container");
-    const downloadLink = document.getElementById("download-link");
-    const downloadURL = document.getElementById("download-url");
+    const tasksEl = document.getElementById('tasks');
+    const addBtn = document.getElementById('add-btn');
+    const form = document.getElementById('download-form');
+    const progressContainer = document.getElementById('progress-container');
+    const progressBar = document.getElementById('progress-bar');
+    const progressText = document.getElementById('progress-text');
+    const downloadList = document.getElementById('download-list');
 
-    function updateProgress() {
-      fetch("/progress")
-        .then(res => res.json())
-        .then(data => {
-          progressBar.value = data.percent;
-          progressText.textContent = data.percent + "%";
-
-          if (data.percent < 100) {
-            setTimeout(updateProgress, 500);
-          } else {
-            downloadLink.style.display = "block";
-            progressText.textContent = "✅ 완료!";
-          }
-        });
+    function renumberTasks() {
+      const taskCards = tasksEl.querySelectorAll('.task');
+      taskCards.forEach((card, idx) => {
+        card.querySelector('div').textContent = (idx+1) + '번 작업';
+      });
     }
 
-    form.addEventListener("submit", function (e) {
-      e.preventDefault();
+    addBtn.addEventListener('click', () => {
+      const div = document.createElement('div');
+      div.className = 'task';
+      div.innerHTML = \`
+        <div style="font-weight:700;"></div>
+        <label>사이트 주소 형식 (예: https://example.com/img_###.jpg)</label>
+        <input type="text" name="url_format[]" required />
+        <label>시작 숫자</label>
+        <input type="number" name="start[]" required />
+        <label>끝 숫자</label>
+        <input type="number" name="end[]" required />
+        <div class="actions"><button type="button" class="danger remove-btn">- 제거</button></div>
+      \`;
+      tasksEl.appendChild(div);
+      renumberTasks();
+      div.querySelector('.remove-btn')?.addEventListener('click', () => {
+        div.remove();
+        renumberTasks();
+      });
+    });
 
-      progressContainer.style.display = "block";
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      progressContainer.style.display = 'block';
       progressBar.value = 0;
-      progressText.textContent = "0%";
-      downloadLink.style.display = "none";
+      progressText.textContent = '0%';
+      downloadList.style.display = 'none';
+      downloadList.innerHTML = '';
 
       const formData = new FormData(form);
-      fetch("/start-download", {
-        method: "POST",
-        body: formData
-      }).then(() => {
-        setTimeout(updateProgress, 500);
-      });
+      const taskCount = tasksEl.querySelectorAll('.task').length;
+
+      fetch('/start-download', { method: 'POST', body: formData })
+        .then(() => {
+          // Start polling progress
+          const poll = () => {
+            fetch('/progress')
+              .then(res => res.json())
+              .then(data => {
+                progressBar.value = data.percent;
+                progressText.textContent = data.percent + '%';
+                if (data.percent < 100) {
+                  setTimeout(poll, 600);
+                } else {
+                  // Build links for each task ZIP
+                  downloadList.style.display = 'block';
+                  let html = '<p>✅ 작업 완료! ZIP 파일을 내려받으세요.</p>';
+                  for (let i = 1; i <= taskCount; i++) {
+                    const href = \`/static/result_task\${i}.zip\`;
+                    html += \`<a href="\${href}" download>result_task\${i}.zip 다운로드</a>\`;
+                  }
+                  downloadList.innerHTML = html;
+                  progressText.textContent = '✅ 완료!';
+                }
+              });
+          };
+          setTimeout(poll, 600);
+        });
     });
   </script>
 </body>
