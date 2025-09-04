@@ -25,6 +25,15 @@ def start_download():
     starts = request.form.getlist('start[]')
     ends = request.form.getlist('end[]')
     zipnames = request.form.getlist('zipname[]')
+    max_workers = request.form.get('max_workers', '').strip()
+
+    # parse max_workers safely
+    try:
+        max_workers = int(max_workers)
+        if max_workers < 1 or max_workers > 20:
+            max_workers = 5
+    except Exception:
+        max_workers = 5
 
     if not url_formats:
         uf = request.form.get('url_format', '').strip()
@@ -69,7 +78,7 @@ def start_download():
     global expected_zips
     expected_zips = [t["zipname"] for t in tasks]
 
-    def download_and_zip_all(tasks_local):
+    def download_and_zip_all(tasks_local, max_workers_val):
         headers = {"User-Agent": "Mozilla/5.0"}
         total_images = sum((t["end"] - t["start"] + 1) for t in tasks_local)
         done_images = [0]
@@ -110,7 +119,7 @@ def start_download():
                     done_images[0] += 1
                     progress_data["percent"] = int((done_images[0] / total_images) * 100)
 
-            with ThreadPoolExecutor(max_workers=5) as executor:
+            with ThreadPoolExecutor(max_workers=max_workers_val) as executor:
                 futures = {executor.submit(fetch, url, i): i for i, url in enumerate(urls, start=start)}
                 for future in as_completed(futures):
                     pass
@@ -136,7 +145,7 @@ def start_download():
 
         progress_data["percent"] = 100
 
-    Thread(target=download_and_zip_all, args=(tasks,)).start()
+    Thread(target=download_and_zip_all, args=(tasks, max_workers)).start()
     return '', 204
 
 @app.route('/progress')
