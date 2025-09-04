@@ -31,15 +31,18 @@
   </style>
   <script>
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register("/static/service-worker.js?v=4");
+      navigator.serviceWorker.register("/static/service-worker.js?v=5");
     }
   </script>
 </head>
 <body>
   <div class="container">
     <h1>이미지 ZIP 다운로더</h1>
-    <p class="desc">작업별로 ZIP 파일명을 직접 정할 수 있습니다. 비워두면 기본(result_taskN.zip)으로 저장됩니다.</p>
+    <p class="desc">ZIP 파일명 직접 지정 + 동시 다운로드 개수를 설정할 수 있습니다.</p>
     <form id="download-form">
+      <label>동시 다운로드 개수 (1~20, 기본 5)</label>
+      <input type="number" name="max_workers" value="5" min="1" max="20" />
+
       <div id="tasks">
         <div class="task">
           <div class="task-title" style="font-weight:700;">1번 작업</div>
@@ -49,8 +52,8 @@
           <input type="number" name="start[]" required />
           <label>끝 숫자</label>
           <input type="number" name="end[]" required />
-          <label>ZIP 파일명 (선택, 예: mypics.zip)</label>
-          <input type="text" name="zipname[]" placeholder="비워두면 result_taskN.zip" />
+          <label>ZIP 파일명 (선택, 예: mypics)</label>
+          <input type="text" name="zipname[]" placeholder="비워두면 result_taskN.zip, .zip은 자동으로 붙음" />
           <div class="actions"><button type="button" class="danger remove-btn" style="display:none;">- 제거</button></div>
         </div>
       </div>
@@ -58,7 +61,7 @@
         <button type="button" id="add-btn">+ 작업 추가</button>
         <button type="submit">다운로드 시작</button>
       </div>
-      <div class="hint">※ 주소는 반드시 ### 를 포함해야 합니다. ZIP 파일명을 직접 정할 수 있습니다.</div>
+      <div class="hint">※ 주소는 반드시 ### 를 포함해야 합니다. ZIP 파일명은 .zip 자동 붙음.</div>
       <div id="error" class="error"></div>
     </form>
 
@@ -103,7 +106,7 @@
           '<label>끝 숫자</label>' +
           '<input type="number" name="end[]" required />' +
           '<label>ZIP 파일명 (선택, 예: mypics)</label>' +
-          '<input type="text" name="zipname[]" placeholder="비워두면 result_taskN.zip" />' +
+          '<input type="text" name="zipname[]" placeholder="비워두면 result_taskN.zip, .zip은 자동으로 붙음" />' +
           '<div class="actions"><button type="button" class="danger remove-btn">- 제거</button></div>';
         return div;
       }
@@ -193,4 +196,3 @@
   </script>
 </body>
 </html>
-
