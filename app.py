@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, send_file, jsonify
+from flask import Flask, request, render_template, jsonify
 import os
 import requests
 from zipfile import ZipFile
@@ -15,66 +15,87 @@ def index():
 
 @app.route('/start-download', methods=['POST'])
 def start_download():
-    url_format = request.form['url_format'].strip()
-    start = int(request.form['start'])
-    end = int(request.form['end'])
+    # Receive arrays for multiple tasks
+    url_formats = request.form.getlist('url_format[]')
+    starts = request.form.getlist('start[]')
+    ends = request.form.getlist('end[]')
 
-    if not url_format.startswith("http"):
-        url_format = "https://" + url_format
+    # Build task list
+    tasks = []
+    for i in range(len(url_formats)):
+        if not url_formats[i].strip():
+            continue
+        tasks.append({
+            "idx": i + 1,  # 1-based for filenames
+            "url_format": url_formats[i].strip(),
+            "start": int(starts[i]),
+            "end": int(ends[i])
+        })
 
-    def download_and_zip():
-        folder = "downloaded_images"
-        os.makedirs(folder, exist_ok=True)
+    # Ensure static dir
+    os.makedirs("static", exist_ok=True)
 
-        headers = {
-            "User-Agent": "Mozilla/5.0"
-        }
+    def download_and_zip_all():
+        headers = {"User-Agent": "Mozilla/5.0"}
 
-        total = end - start + 1
-        count = 0
+        total_images = 0
+        for t in tasks:
+            total_images += (t["end"] - t["start"] + 1)
+        done_images = 0
+        progress_data["percent"] = 0
 
-        for i in range(start, end + 1):
-            url = url_format.replace("###", str(i))
-            try:
-                res = requests.get(url, headers=headers, timeout=5)
-                res.raise_for_status()
+        for t in tasks:
+            url_format = t["url_format"]
+            start = t["start"]
+            end = t["end"]
+            idx = t["idx"]
 
-                path = urlparse(url).path
-                ext = os.path.splitext(path)[1].lower().replace(".", "")
-                if ext not in ["jpg", "jpeg", "png", "gif", "webp", "bmp"]:
-                    ext = "jpg"
+            if not url_format.startswith("http"):
+                url_format = "https://" + url_format
 
-                filename = f"{i}.{ext}"
-                with open(os.path.join(folder, filename), "wb") as f:
-                    f.write(res.content)
+            # Working folder per task
+            folder = f"downloaded_images_task{idx}"
+            os.makedirs(folder, exist_ok=True)
 
-            except Exception as e:
-                print(f"다운로드 실패 ({url}): {e}")
-                continue
+            for i in range(start, end + 1):
+                url = url_format.replace("###", str(i))
+                try:
+                    res = requests.get(url, headers=headers, timeout=7)
+                    res.raise_for_status()
 
-            count += 1
-            progress_data["percent"] = int((count / total) * 100)
+                    path = urlparse(url).path
+                    ext = os.path.splitext(path)[1].lower().replace(".", "")
+                    if ext not in ["jpg", "jpeg", "png", "gif", "webp", "bmp"]:
+                        ext = "jpg"
 
-        # ZIP 만들기
-        zip_buffer = BytesIO()
-        with ZipFile(zip_buffer, 'w') as zipf:
+                    filename = f"{i}.{ext}"
+                    with open(os.path.join(folder, filename), "wb") as f:
+                        f.write(res.content)
+                except Exception as e:
+                    print(f"[task{idx}] 다운로드 실패 ({url}): {e}")
+                finally:
+                    done_images += 1
+                    if total_images > 0:
+                        progress_data["percent"] = int((done_images / total_images) * 100)
+
+            # Make ZIP for this task
+            zip_path = os.path.join("static", f"result_task{idx}.zip")
+            zip_buffer = BytesIO()
+            with ZipFile(zip_buffer, 'w') as zipf:
+                for file in sorted(os.listdir(folder)):
+                    zipf.write(os.path.join(folder, file), arcname=file)
+            zip_buffer.seek(0)
+            with open(zip_path, "wb") as f:
+                f.write(zip_buffer.read())
+
+            # Cleanup
             for file in os.listdir(folder):
-                zipf.write(os.path.join(folder, file), arcname=file)
-
-        # 정리
-        for file in os.listdir(folder):
-            os.remove(os.path.join(folder, file))
-        os.rmdir(folder)
-
-        zip_buffer.seek(0)
-        with open("static/result.zip", "wb") as f:
-            f.write(zip_buffer.read())
+                os.remove(os.path.join(folder, file))
+            os.rmdir(folder)
 
         progress_data["percent"] = 100
 
-    # 백그라운드로 실행
-    Thread(target=download_and_zip).start()
-
+    Thread(target=download_and_zip_all).start()
     return '', 204
 
 @app.route('/progress')
