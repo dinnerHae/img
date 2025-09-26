@@ -13,7 +13,8 @@
     h1 { font-size: 24px; text-align: center; margin-bottom: 12px; }
     .desc { color:#666; font-size: 14px; text-align:center; margin-bottom: 16px; }
     label { display:block; margin-top: 10px; font-weight: bold; }
-    input[type="text"], input[type="number"] { width: 100%; padding: 10px; margin-top: 6px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+    input[type="text"], input[type="number"], textarea { width: 100%; padding: 10px; margin-top: 6px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+    textarea { resize: vertical; min-height: 60px; }
     .task { background:#fafafa; border:1px solid #e5e5e5; border-radius:10px; padding:12px; margin-top:14px; }
     .actions { display:flex; gap:8px; margin-top:14px; }
     button { padding: 12px 14px; background:#007bff; color:#fff; font-weight:600; border:none; border-radius:8px; cursor:pointer; }
@@ -31,7 +32,7 @@
   </style>
   <script>
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register("/static/service-worker.js?v=5");
+      navigator.serviceWorker.register("/static/service-worker.js?v=6");
     }
   </script>
 </head>
@@ -49,9 +50,12 @@
           <label>사이트 주소 형식 (예: https://example.com/img_###.jpg)</label>
           <input type="text" name="url_format[]" required />
           <label>시작 숫자</label>
-          <input type="number" name="start[]" required />
+          <input type="number" name="start[]" />
           <label>끝 숫자</label>
-          <input type="number" name="end[]" required />
+          <input type="number" name="end[]" />
+          <label>단어 리스트 (선택: 한 줄에 한 단어씩)</label>
+          <textarea name="wordlist[]" placeholder="예: 바나나&#10;사과"></textarea>
+          <div class="hint">※ 숫자 범위(start~end) 또는 단어 리스트 중 하나만 사용하세요.</div>
           <label>ZIP 파일명 (선택, 예: mypics)</label>
           <input type="text" name="zipname[]" placeholder="비워두면 result_taskN.zip, .zip은 자동으로 붙음" />
           <div class="actions"><button type="button" class="danger remove-btn" style="display:none;">- 제거</button></div>
@@ -61,7 +65,7 @@
         <button type="button" id="add-btn">+ 작업 추가</button>
         <button type="submit">다운로드 시작</button>
       </div>
-      <div class="hint">※ 주소는 반드시 ### 를 포함해야 합니다. ZIP 파일명은 .zip 자동 붙음.</div>
+      <div class="hint">※ 주소는 반드시 ### 를 포함해야 합니다.</div>
       <div id="error" class="error"></div>
     </form>
 
@@ -102,9 +106,12 @@
           '<label>사이트 주소 형식 (예: https://example.com/img_###.jpg)</label>' +
           '<input type="text" name="url_format[]" required />' +
           '<label>시작 숫자</label>' +
-          '<input type="number" name="start[]" required />' +
+          '<input type="number" name="start[]" />' +
           '<label>끝 숫자</label>' +
-          '<input type="number" name="end[]" required />' +
+          '<input type="number" name="end[]" />' +
+          '<label>단어 리스트 (선택: 한 줄에 한 단어씩)</label>' +
+          '<textarea name="wordlist[]" placeholder="예: 바나나&#10;사과"></textarea>' +
+          '<div class="hint">※ 숫자 범위(start~end) 또는 단어 리스트 중 하나만 사용하세요.</div>' +
           '<label>ZIP 파일명 (선택, 예: mypics)</label>' +
           '<input type="text" name="zipname[]" placeholder="비워두면 result_taskN.zip, .zip은 자동으로 붙음" />' +
           '<div class="actions"><button type="button" class="danger remove-btn">- 제거</button></div>';
