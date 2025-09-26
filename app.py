@@ -24,10 +24,10 @@ def start_download():
     url_formats = request.form.getlist('url_format[]')
     starts = request.form.getlist('start[]')
     ends = request.form.getlist('end[]')
+    wordlists = request.form.getlist('wordlist[]')
     zipnames = request.form.getlist('zipname[]')
     max_workers = request.form.get('max_workers', '').strip()
 
-    # parse max_workers safely
     try:
         max_workers = int(max_workers)
         if max_workers < 1 or max_workers > 20:
@@ -35,29 +35,11 @@ def start_download():
     except Exception:
         max_workers = 5
 
-    if not url_formats:
-        uf = request.form.get('url_format', '').strip()
-        st = request.form.get('start', '').strip()
-        en = request.form.get('end', '').strip()
-        zn = request.form.get('zipname', '').strip()
-        if uf and st and en:
-            url_formats = [uf]
-            starts = [st]
-            ends = [en]
-            zipnames = [zn]
-
     tasks = []
     for i in range(len(url_formats)):
         uf = (url_formats[i] or '').strip()
         if not uf:
             continue
-        try:
-            s = int(starts[i])
-            e = int(ends[i])
-        except Exception:
-            continue
-        if s > e:
-            s, e = e, s
 
         zn = (zipnames[i] if i < len(zipnames) else "").strip()
         if zn and not zn.lower().endswith(".zip"):
@@ -65,13 +47,31 @@ def start_download():
         if not zn:
             zn = f"result_task{len(tasks)+1}.zip"
 
-        tasks.append({
-            "idx": len(tasks)+1,
-            "url_format": uf,
-            "start": s,
-            "end": e,
-            "zipname": zn
-        })
+        wl = (wordlists[i] or '').strip().splitlines()
+        wl = [w.strip() for w in wl if w.strip()]
+
+        if wl:  # 단어 모드
+            tasks.append({
+                "idx": len(tasks)+1,
+                "url_format": uf,
+                "words": wl,
+                "zipname": zn,
+                "mode": "words"
+            })
+        else:   # 숫자 모드
+            try:
+                s = int(starts[i]); e = int(ends[i])
+            except Exception:
+                continue
+            if s > e: s, e = e, s
+            tasks.append({
+                "idx": len(tasks)+1,
+                "url_format": uf,
+                "start": s,
+                "end": e,
+                "zipname": zn,
+                "mode": "numbers"
+            })
 
     os.makedirs("static", exist_ok=True)
 
@@ -80,7 +80,12 @@ def start_download():
 
     def download_and_zip_all(tasks_local, max_workers_val):
         headers = {"User-Agent": "Mozilla/5.0"}
-        total_images = sum((t["end"] - t["start"] + 1) for t in tasks_local)
+        total_images = 0
+        for t in tasks_local:
+            if t["mode"] == "numbers":
+                total_images += (t["end"] - t["start"] + 1)
+            else:
+                total_images += len(t["words"])
         done_images = [0]
         progress_data["percent"] = 0
 
@@ -90,8 +95,6 @@ def start_download():
 
         for t in tasks_local:
             url_format = t["url_format"]
-            start = t["start"]
-            end = t["end"]
             idx = t["idx"]
             zipname = t["zipname"]
             if not url_format.startswith("http"):
@@ -100,7 +103,10 @@ def start_download():
             folder = f"downloaded_images_task{idx}"
             os.makedirs(folder, exist_ok=True)
 
-            urls = [url_format.replace("###", str(i)) for i in range(start, end+1)]
+            if t["mode"] == "numbers":
+                urls = [url_format.replace("###", str(i)) for i in range(t["start"], t["end"]+1)]
+            else:
+                urls = [url_format.replace("###", w) for w in t["words"]]
 
             def fetch(url, i):
                 try:
@@ -120,7 +126,7 @@ def start_download():
                     progress_data["percent"] = int((done_images[0] / total_images) * 100)
 
             with ThreadPoolExecutor(max_workers=max_workers_val) as executor:
-                futures = {executor.submit(fetch, url, i): i for i, url in enumerate(urls, start=start)}
+                futures = {executor.submit(fetch, url, i): i for i, url in enumerate(urls, start=1)}
                 for future in as_completed(futures):
                     pass
 
