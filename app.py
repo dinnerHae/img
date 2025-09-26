@@ -1,6 +1,5 @@
 from flask import Flask, request, render_template, jsonify
-import os
-import requests
+import os, requests
 from zipfile import ZipFile
 from urllib.parse import urlparse
 from io import BytesIO
@@ -25,6 +24,8 @@ def start_download():
     starts = request.form.getlist('start[]')
     ends = request.form.getlist('end[]')
     wordlists = request.form.getlist('wordlist[]')
+    referers = request.form.getlist('referer[]')
+    cookies = request.form.getlist('cookie[]')
     zipnames = request.form.getlist('zipname[]')
     max_workers = request.form.get('max_workers', '').strip()
 
@@ -50,15 +51,20 @@ def start_download():
         wl = (wordlists[i] or '').strip().splitlines()
         wl = [w.strip() for w in wl if w.strip()]
 
-        if wl:  # 단어 모드
+        referer = (referers[i] if i < len(referers) else "").strip()
+        cookie = (cookies[i] if i < len(cookies) else "").strip()
+
+        if wl:
             tasks.append({
                 "idx": len(tasks)+1,
                 "url_format": uf,
                 "words": wl,
                 "zipname": zn,
-                "mode": "words"
+                "mode": "words",
+                "referer": referer,
+                "cookie": cookie
             })
-        else:   # 숫자 모드
+        else:
             try:
                 s = int(starts[i]); e = int(ends[i])
             except Exception:
@@ -70,7 +76,9 @@ def start_download():
                 "start": s,
                 "end": e,
                 "zipname": zn,
-                "mode": "numbers"
+                "mode": "numbers",
+                "referer": referer,
+                "cookie": cookie
             })
 
     os.makedirs("static", exist_ok=True)
@@ -79,7 +87,6 @@ def start_download():
     expected_zips = [t["zipname"] for t in tasks]
 
     def download_and_zip_all(tasks_local, max_workers_val):
-        headers = {"User-Agent": "Mozilla/5.0"}
         total_images = 0
         for t in tasks_local:
             if t["mode"] == "numbers":
@@ -110,6 +117,9 @@ def start_download():
 
             def fetch(url, i):
                 try:
+                    headers = {"User-Agent": "Mozilla/5.0"}
+                    if t["referer"]: headers["Referer"] = t["referer"]
+                    if t["cookie"]: headers["Cookie"] = t["cookie"]
                     res = requests.get(url, headers=headers, timeout=10)
                     res.raise_for_status()
                     path = urlparse(url).path
