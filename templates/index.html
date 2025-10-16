@@ -121,7 +121,6 @@
         return div;
       }
 
-      // ✅ 작업 추가 시 이전 입력값 복사 기능 포함
       addBtn.addEventListener('click', function(){
         var cards = tasksEl.getElementsByClassName('task');
         var lastCard = cards[cards.length - 1];
@@ -146,6 +145,32 @@
             renumberTasks();
           }
         }
+      });
+
+      // ✅ 새로고침 방지 포함
+      form.addEventListener('submit', function(e){
+        e.preventDefault();
+
+        errorBox.style.display = 'none';
+        errorBox.textContent = '';
+        progressContainer.style.display = 'block';
+        progressBar.value = 0;
+        progressText.textContent = '0%';
+        downloadList.style.display = 'none';
+        downloadList.innerHTML = '';
+
+        var formData = new FormData(form);
+
+        fetch('/start-download', { method: 'POST', body: formData })
+          .then(function(res){
+            if (!res.ok) throw new Error('요청 실패: ' + res.status);
+            console.log('다운로드 시작됨');
+          })
+          .catch(function(err){
+            errorBox.style.display = 'block';
+            errorBox.textContent = '요청 중 오류 발생: ' + (err && err.message ? err.message : err);
+            console.error(err);
+          });
       });
 
       renumberTasks();
