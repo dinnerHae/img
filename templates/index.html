@@ -97,7 +97,7 @@
         }
       }
 
-      function makeTaskCard() {
+      function makeTaskCard(values) {
         var div = document.createElement('div');
         div.className = 'task';
         div.innerHTML =
@@ -118,20 +118,27 @@
           '<label>ZIP 파일명 (선택, 예: mypics)</label>' +
           '<input type="text" name="zipname[]" placeholder="비워두면 result_taskN.zip, .zip은 자동으로 붙음" />' +
           '<div class="actions"><button type="button" class="danger remove-btn">- 제거</button></div>';
+
+        if (values) {
+          var inputs = div.querySelectorAll('input, textarea');
+          for (var i = 0; i < inputs.length; i++) {
+            var name = inputs[i].getAttribute('name');
+            if (values[name] !== undefined) inputs[i].value = values[name];
+          }
+        }
         return div;
       }
 
       addBtn.addEventListener('click', function(){
-        var cards = tasksEl.getElementsByClassName('task');
-        var lastCard = cards[cards.length - 1];
-        var card = makeTaskCard();
-        if (lastCard) {
-          var oldInputs = lastCard.querySelectorAll('input, textarea');
-          var newInputs = card.querySelectorAll('input, textarea');
-          for (var i = 0; i < oldInputs.length && i < newInputs.length; i++) {
-            newInputs[i].value = oldInputs[i].value;
+        var lastTask = tasksEl.lastElementChild;
+        var prevValues = {};
+        if (lastTask) {
+          var inputs = lastTask.querySelectorAll('input, textarea');
+          for (var i = 0; i < inputs.length; i++) {
+            prevValues[inputs[i].name] = inputs[i].value;
           }
         }
+        var card = makeTaskCard(prevValues);
         tasksEl.appendChild(card);
         renumberTasks();
       });
@@ -147,10 +154,45 @@
         }
       });
 
-      // ✅ 새로고침 방지 포함
+      function startProgressPolling() {
+        function poll(){
+          fetch('/progress')
+            .then(function(res){ return res.json(); })
+            .then(function(data){
+              progressBar.value = data.percent || 0;
+              progressText.textContent = (data.percent || 0) + '%';
+              if ((data.percent || 0) < 100) {
+                setTimeout(poll, 700);
+              } else {
+                fetch('/expected-zips')
+                  .then(function(r){ return r.json(); })
+                  .then(function(j){
+                    var zips = j.zips || [];
+                    downloadList.style.display = 'block';
+                    var html = '<p>✅ 작업 완료! ZIP 파일을 내려받으세요.</p>';
+                    if (!zips.length) {
+                      html += '<p>생성된 ZIP이 없습니다.</p>';
+                    } else {
+                      for (var i = 0; i < zips.length; i++) {
+                        var href = '/static/' + zips[i];
+                        html += '<a href="' + href + '" download>' + zips[i] + ' 다운로드</a>';
+                      }
+                    }
+                    downloadList.innerHTML = html;
+                    progressText.textContent = '✅ 완료!';
+                  });
+              }
+            })
+            .catch(function(err){
+              console.error(err);
+              setTimeout(poll, 1000);
+            });
+        }
+        setTimeout(poll, 700);
+      }
+
       form.addEventListener('submit', function(e){
         e.preventDefault();
-
         errorBox.style.display = 'none';
         errorBox.textContent = '';
         progressContainer.style.display = 'block';
@@ -164,7 +206,7 @@
         fetch('/start-download', { method: 'POST', body: formData })
           .then(function(res){
             if (!res.ok) throw new Error('요청 실패: ' + res.status);
-            console.log('다운로드 시작됨');
+            startProgressPolling();
           })
           .catch(function(err){
             errorBox.style.display = 'block';
