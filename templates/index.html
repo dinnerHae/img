@@ -13,7 +13,8 @@
     h1 { font-size: 24px; text-align: center; margin-bottom: 12px; }
     .desc { color:#666; font-size: 14px; text-align:center; margin-bottom: 16px; }
     label { display:block; margin-top: 10px; font-weight: bold; }
-    input[type="text"], input[type="number"] { width: 100%; padding: 10px; margin-top: 6px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+    input[type="text"], input[type="number"], textarea { width: 100%; padding: 10px; margin-top: 6px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+    textarea { resize: vertical; min-height: 60px; }
     .task { background:#fafafa; border:1px solid #e5e5e5; border-radius:10px; padding:12px; margin-top:14px; }
     .actions { display:flex; gap:8px; margin-top:14px; }
     button { padding: 12px 14px; background:#007bff; color:#fff; font-weight:600; border:none; border-radius:8px; cursor:pointer; }
@@ -29,11 +30,6 @@
     .hint { font-size:12px; color:#888; margin-top:6px; }
     .error { color:#b00020; margin-top:10px; font-size:13px; display:none; }
   </style>
-  <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register("/static/service-worker.js?v=5");
-    }
-  </script>
 </head>
 <body>
   <div class="container">
@@ -49,9 +45,16 @@
           <label>사이트 주소 형식 (예: https://example.com/img_###.jpg)</label>
           <input type="text" name="url_format[]" required />
           <label>시작 숫자</label>
-          <input type="number" name="start[]" required />
+          <input type="number" name="start[]" />
           <label>끝 숫자</label>
-          <input type="number" name="end[]" required />
+          <input type="number" name="end[]" />
+          <label>단어 리스트 (선택: 한 줄에 한 단어씩)</label>
+          <textarea name="wordlist[]" placeholder="예: 바나나&#10;사과"></textarea>
+          <label>Referer (선택)</label>
+          <input type="text" name="referer[]" placeholder="예: https://example.com/viewer" />
+          <label>Cookie (선택)</label>
+          <input type="text" name="cookie[]" placeholder="예: sessionid=12345; token=abcd" />
+          <div class="hint">※ 숫자 범위(start~end), 단어 리스트, Referer/Cookie는 필요할 때만 사용하세요.</div>
           <label>ZIP 파일명 (선택, 예: mypics)</label>
           <input type="text" name="zipname[]" placeholder="비워두면 result_taskN.zip, .zip은 자동으로 붙음" />
           <div class="actions"><button type="button" class="danger remove-btn" style="display:none;">- 제거</button></div>
@@ -61,7 +64,7 @@
         <button type="button" id="add-btn">+ 작업 추가</button>
         <button type="submit">다운로드 시작</button>
       </div>
-      <div class="hint">※ 주소는 반드시 ### 를 포함해야 합니다. ZIP 파일명은 .zip 자동 붙음.</div>
+      <div class="hint">※ 주소는 반드시 ### 를 포함해야 합니다.</div>
       <div id="error" class="error"></div>
     </form>
 
@@ -102,22 +105,30 @@
           '<label>사이트 주소 형식 (예: https://example.com/img_###.jpg)</label>' +
           '<input type="text" name="url_format[]" required />' +
           '<label>시작 숫자</label>' +
-          '<input type="number" name="start[]" required />' +
+          '<input type="number" name="start[]" />' +
           '<label>끝 숫자</label>' +
-          '<input type="number" name="end[]" required />' +
+          '<input type="number" name="end[]" />' +
+          '<label>단어 리스트 (선택: 한 줄에 한 단어씩)</label>' +
+          '<textarea name="wordlist[]" placeholder="예: 바나나&#10;사과"></textarea>' +
+          '<label>Referer (선택)</label>' +
+          '<input type="text" name="referer[]" placeholder="예: https://example.com/viewer" />' +
+          '<label>Cookie (선택)</label>' +
+          '<input type="text" name="cookie[]" placeholder="예: sessionid=12345; token=abcd" />' +
+          '<div class="hint">※ 숫자 범위(start~end), 단어 리스트, Referer/Cookie는 필요할 때만 사용하세요.</div>' +
           '<label>ZIP 파일명 (선택, 예: mypics)</label>' +
           '<input type="text" name="zipname[]" placeholder="비워두면 result_taskN.zip, .zip은 자동으로 붙음" />' +
           '<div class="actions"><button type="button" class="danger remove-btn">- 제거</button></div>';
         return div;
       }
 
+      // ✅ 작업 추가 시 이전 입력값 복사 기능 포함
       addBtn.addEventListener('click', function(){
         var cards = tasksEl.getElementsByClassName('task');
         var lastCard = cards[cards.length - 1];
         var card = makeTaskCard();
         if (lastCard) {
-          var oldInputs = lastCard.querySelectorAll('input');
-          var newInputs = card.querySelectorAll('input');
+          var oldInputs = lastCard.querySelectorAll('input, textarea');
+          var newInputs = card.querySelectorAll('input, textarea');
           for (var i = 0; i < oldInputs.length && i < newInputs.length; i++) {
             newInputs[i].value = oldInputs[i].value;
           }
@@ -135,69 +146,6 @@
             renumberTasks();
           }
         }
-      });
-
-      function startProgressPolling() {
-        function poll(){
-          fetch('/progress')
-            .then(function(res){ return res.json(); })
-            .then(function(data){
-              progressBar.value = data.percent || 0;
-              progressText.textContent = (data.percent || 0) + '%';
-              if ((data.percent || 0) < 100) {
-                setTimeout(poll, 700);
-              } else {
-                fetch('/expected-zips')
-                  .then(function(r){ return r.json(); })
-                  .then(function(j){
-                    var zips = j.zips || [];
-                    downloadList.style.display = 'block';
-                    var html = '<p>✅ 작업 완료! ZIP 파일을 내려받으세요.</p>';
-                    if (!zips.length) {
-                      html += '<p>생성된 ZIP이 없습니다.</p>';
-                    } else {
-                      for (var i = 0; i < zips.length; i++) {
-                        var href = '/static/' + zips[i];
-                        html += '<a href="' + href + '" download>' + zips[i] + ' 다운로드</a>';
-                      }
-                    }
-                    downloadList.innerHTML = html;
-                    progressText.textContent = '✅ 완료!';
-                  });
-              }
-            })
-            .catch(function(err){
-              console.error(err);
-              setTimeout(poll, 1000);
-            });
-        }
-        setTimeout(poll, 700);
-      }
-
-      form.addEventListener('submit', function(e){
-        e.preventDefault();
-        errorBox.style.display = 'none';
-        errorBox.textContent = '';
-        progressContainer.style.display = 'block';
-        progressBar.value = 0;
-        progressText.textContent = '0%';
-        downloadList.style.display = 'none';
-        downloadList.innerHTML = '';
-
-        var formData = new FormData(form);
-
-        fetch('/start-download', { method: 'POST', body: formData })
-          .then(function(res){
-            if (!res.ok) {
-              throw new Error('요청 실패: ' + res.status);
-            }
-            startProgressPolling();
-          })
-          .catch(function(err){
-            errorBox.style.display = 'block';
-            errorBox.textContent = '요청 중 오류 발생: ' + (err && err.message ? err.message : err);
-            console.error(err);
-          });
       });
 
       renumberTasks();
