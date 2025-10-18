@@ -1,5 +1,6 @@
 from flask import Flask, request, render_template, jsonify
-import os, requests
+import os
+import requests
 from zipfile import ZipFile
 from urllib.parse import urlparse
 from io import BytesIO
@@ -20,15 +21,8 @@ def expected():
 
 @app.route('/start-download', methods=['POST'])
 def start_download():
-    url_formats = request.form.getlist('url_format[]')
-    starts = request.form.getlist('start[]')
-    ends = request.form.getlist('end[]')
-    wordlists = request.form.getlist('wordlist[]')
-    referers = request.form.getlist('referer[]')
-    cookies = request.form.getlist('cookie[]')
-    zipnames = request.form.getlist('zipname[]')
+    # 공통: 동시 작업자 파싱
     max_workers = request.form.get('max_workers', '').strip()
-
     try:
         max_workers = int(max_workers)
         if max_workers < 1 or max_workers > 20:
@@ -36,11 +30,127 @@ def start_download():
     except Exception:
         max_workers = 5
 
+    # 1) 다중 주소 섹션 처리
+    multi_urls_raw = (request.form.get('multi_urls') or '').strip()
+    if multi_urls_raw:
+        urls_list = [u.strip() for u in multi_urls_raw.split(',') if u.strip()]
+        try:
+            s = int(request.form.get('multi_start', '0') or 0)
+            e = int(request.form.get('multi_end', '0') or 0)
+        except Exception:
+            s, e = 0, -1  # empty range => 처리 없이 완료
+
+        if s > e:
+            s, e = e, s
+
+        referer = (request.form.get('multi_referer') or '').strip()
+        cookie = (request.form.get('multi_cookie') or '').strip()
+        zipname = (request.form.get('multi_zipname') or '').strip() or 'multi_sites.zip'
+        if not zipname.lower().endswith('.zip'):
+            zipname += '.zip'
+
+        # 예상 ZIP 갱신
+        global expected_zips
+        expected_zips = [zipname]
+
+        def multi_download(urls, start, end, workers):
+            # 헤더 구성
+            headers = {"User-Agent": "Mozilla/5.0"}
+            if referer: headers["Referer"] = referer
+            if cookie: headers["Cookie"] = cookie
+
+            # 전체 작업 개수 계산 (### 유무에 따라)
+            expanded = []
+            for site in urls:
+                # 스킴 보정
+                if not site.startswith('http'):
+                    site = 'https://' + site
+                if '###' in site and start <= end:
+                    for i in range(start, end+1):
+                        expanded.append((site, i))
+                else:
+                    expanded.append((site, None))
+
+            total = len(expanded)
+            done = 0
+            progress_data["percent"] = 0
+            os.makedirs("static", exist_ok=True)
+            zip_path = os.path.join("static", zipname)
+
+            # 각 요청을 받아 zip에 즉시 기록
+            def fetch_pack(item):
+                nonlocal done
+                site, i = item
+                # 도메인 폴더 결정
+                parsed = urlparse(site)
+                netloc = parsed.netloc or parsed.path.split('/')[0]
+                folder = netloc.replace(':', '_')
+                # 개별 URL
+                url = site.replace('###', str(i)) if i is not None else site
+                try:
+                    res = requests.get(url, headers=headers, timeout=15)
+                    res.raise_for_status()
+                    path = urlparse(url).path
+                    base = os.path.basename(path) or (f"file_{i}.jpg" if i is not None else "file.jpg")
+                    # in-memory로 반환
+                    content = res.content
+                    return (folder, base, content)
+                except Exception as ex:
+                    # 실패 시 None 반환
+                    return None
+                finally:
+                    done += 1
+                    progress_data["percent"] = int(done / max(1, total) * 100)
+
+            # 병렬 요청 후 zip 쓰기
+            zip_buffer = BytesIO()
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                results = list(executor.map(fetch_pack, expanded))
+
+            with ZipFile(zip_buffer, 'w') as zipf:
+                for r in results:
+                    if not r: 
+                        continue
+                    folder, base, content = r
+                    arcname = os.path.join(folder, base)
+                    zipf.writestr(arcname, content)
+
+            # 최종 zip 저장
+            with open(zip_path, "wb") as f:
+                f.write(zip_buffer.getvalue())
+
+            progress_data["percent"] = 100
+
+        Thread(target=multi_download, args=(urls_list, s, e, max_workers)).start()
+        return '', 204
+
+    # 2) 기존 다중 작업 카드 처리 (원본 유지)
+    url_formats = request.form.getlist('url_format[]')
+    starts = request.form.getlist('start[]')
+    ends = request.form.getlist('end[]')
+    zipnames = request.form.getlist('zipname[]')
+
+    # 빈 경우 폴백 (원본의 단일 필드 처리 호환)
+    if not url_formats:
+        uf = request.form.get('url_format', '').strip()
+        st = request.form.get('start', '').strip()
+        en = request.form.get('end', '').strip()
+        zn = request.form.get('zipname', '').strip()
+        if uf and st and en:
+            url_formats = [uf]; starts = [st]; ends = [en]; zipnames = [zn]
+
     tasks = []
     for i in range(len(url_formats)):
         uf = (url_formats[i] or '').strip()
         if not uf:
             continue
+        try:
+            s = int(starts[i])
+            e = int(ends[i])
+        except Exception:
+            continue
+        if s > e:
+            s, e = e, s
 
         zn = (zipnames[i] if i < len(zipnames) else "").strip()
         if zn and not zn.lower().endswith(".zip"):
@@ -48,38 +158,13 @@ def start_download():
         if not zn:
             zn = f"result_task{len(tasks)+1}.zip"
 
-        wl = (wordlists[i] or '').strip().splitlines()
-        wl = [w.strip() for w in wl if w.strip()]
-
-        referer = (referers[i] if i < len(referers) else "").strip()
-        cookie = (cookies[i] if i < len(cookies) else "").strip()
-
-        if wl:
-            tasks.append({
-                "idx": len(tasks)+1,
-                "url_format": uf,
-                "words": wl,
-                "zipname": zn,
-                "mode": "words",
-                "referer": referer,
-                "cookie": cookie
-            })
-        else:
-            try:
-                s = int(starts[i]); e = int(ends[i])
-            except Exception:
-                continue
-            if s > e: s, e = e, s
-            tasks.append({
-                "idx": len(tasks)+1,
-                "url_format": uf,
-                "start": s,
-                "end": e,
-                "zipname": zn,
-                "mode": "numbers",
-                "referer": referer,
-                "cookie": cookie
-            })
+        tasks.append({
+            "idx": len(tasks)+1,
+            "url_format": uf,
+            "start": s,
+            "end": e,
+            "zipname": zn
+        })
 
     os.makedirs("static", exist_ok=True)
 
@@ -87,12 +172,8 @@ def start_download():
     expected_zips = [t["zipname"] for t in tasks]
 
     def download_and_zip_all(tasks_local, max_workers_val):
-        total_images = 0
-        for t in tasks_local:
-            if t["mode"] == "numbers":
-                total_images += (t["end"] - t["start"] + 1)
-            else:
-                total_images += len(t["words"])
+        headers = {"User-Agent": "Mozilla/5.0"}
+        total_images = sum((t["end"] - t["start"] + 1) for t in tasks_local)
         done_images = [0]
         progress_data["percent"] = 0
 
@@ -102,6 +183,8 @@ def start_download():
 
         for t in tasks_local:
             url_format = t["url_format"]
+            start = t["start"]
+            end = t["end"]
             idx = t["idx"]
             zipname = t["zipname"]
             if not url_format.startswith("http"):
@@ -110,16 +193,10 @@ def start_download():
             folder = f"downloaded_images_task{idx}"
             os.makedirs(folder, exist_ok=True)
 
-            if t["mode"] == "numbers":
-                urls = [url_format.replace("###", str(i)) for i in range(t["start"], t["end"]+1)]
-            else:
-                urls = [url_format.replace("###", w) for w in t["words"]]
+            urls = [url_format.replace("###", str(i)) for i in range(start, end+1)]
 
             def fetch(url, i):
                 try:
-                    headers = {"User-Agent": "Mozilla/5.0"}
-                    if t["referer"]: headers["Referer"] = t["referer"]
-                    if t["cookie"]: headers["Cookie"] = t["cookie"]
                     res = requests.get(url, headers=headers, timeout=10)
                     res.raise_for_status()
                     path = urlparse(url).path
@@ -136,8 +213,8 @@ def start_download():
                     progress_data["percent"] = int((done_images[0] / total_images) * 100)
 
             with ThreadPoolExecutor(max_workers=max_workers_val) as executor:
-                futures = {executor.submit(fetch, url, i): i for i, url in enumerate(urls, start=1)}
-                for future in as_completed(futures):
+                futures = {executor.submit(fetch, url, i): i for i, url in enumerate(urls, start=start)}
+                for _ in as_completed(futures):
                     pass
 
             zip_path = os.path.join("static", zipname)
