@@ -80,13 +80,14 @@ def start_download():
                     site, i = item
                     parsed = urlparse(site)
                     netloc = parsed.netloc or parsed.path.split('/')[0]
-                    folder = netloc.replace(':', '_')
+                    folder = netloc.replace(':', '_').replace('/', '_')
                     url = site.replace('###', str(i)) if i is not None else site
                     try:
                         res = requests.get(url, headers=headers, timeout=15)
                         res.raise_for_status()
                         path = urlparse(url).path
-                        base = os.path.basename(path) or (f"file_{i}.jpg" if i is not None else "file.jpg")
+                        # 안전한 파일명 (중복방지 + 폴더명 prefix)
+                        base = f"{folder}_{os.path.basename(path) or (f'file_{i}.jpg' if i is not None else 'file.jpg')}"
                         arcname = os.path.join(folder, base)
                         zipf.writestr(arcname, res.content)
                     except Exception as ex:
