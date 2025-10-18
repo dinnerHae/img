@@ -5,7 +5,7 @@ from zipfile import ZipFile
 from urllib.parse import urlparse
 from io import BytesIO
 from threading import Thread
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
 progress_data = {"percent": 0}
@@ -52,61 +52,51 @@ def start_download():
 
         expected_zips = [zipname]
 
-        def multi_download(urls, start, end, workers):
+        def multi_download(sites, start, end, workers):
             headers = {"User-Agent": "Mozilla/5.0"}
             if referer: headers["Referer"] = referer
             if cookie: headers["Cookie"] = cookie
 
-            expanded = []
-            for site in urls:
-                if not site.startswith('http'):
-                    site = 'https://' + site
-                if '###' in site and start <= end:
-                    for i in range(start, end+1):
-                        expanded.append((site, i))
-                else:
-                    expanded.append((site, None))
-
-            total = len(expanded)
-            done = 0
-            progress_data["percent"] = 0
             os.makedirs("static", exist_ok=True)
+            total_sites = len(sites)
+            done_sites = 0
+            progress_data["percent"] = 0
+
+            def download_site(site_url):
+                parsed = urlparse(site_url)
+                site_folder = parsed.path.strip("/").split("/")[0] or parsed.netloc
+                site_folder = site_folder.replace(":", "_").replace("/", "_")
+                buf = BytesIO()
+                with ZipFile(buf, "w") as z:
+                    if "###" in site_url and start <= end:
+                        urls = [site_url.replace("###", str(i)) for i in range(start, end+1)]
+                    else:
+                        urls = [site_url]
+                    for i, u in enumerate(urls, start=start):
+                        try:
+                            res = requests.get(u, headers=headers, timeout=15)
+                            res.raise_for_status()
+                            ext = os.path.splitext(urlparse(u).path)[1] or ".jpg"
+                            filename = f"{i}{ext}"
+                            z.writestr(f"{site_folder}/{filename}", res.content)
+                        except Exception as ex:
+                            print(f"[{site_folder}] 실패 {u}: {ex}")
+                return site_folder, buf.getvalue()
+
+            # 1️⃣ 병렬로 각 사이트 ZIP 생성
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                results = list(ex.map(download_site, sites))
+
+            # 2️⃣ 메인 스레드에서 통합 ZIP 작성
             zip_path = os.path.join("static", zipname)
+            with ZipFile(zip_path, "w") as main_zip:
+                for site_folder, data in results:
+                    with ZipFile(BytesIO(data)) as subzip:
+                        for name in subzip.namelist():
+                            main_zip.writestr(name, subzip.read(name))
+                    done_sites += 1
+                    progress_data["percent"] = int(done_sites / max(1, total_sites) * 100)
 
-            def fetch_content(item):
-                nonlocal done
-                site, i = item
-                parsed = urlparse(site)
-                netloc = parsed.netloc or parsed.path.split('/')[0]
-                folder = netloc.replace(':', '_').replace('/', '_')
-                url = site.replace('###', str(i)) if i is not None else site
-                try:
-                    res = requests.get(url, headers=headers, timeout=15)
-                    res.raise_for_status()
-                    path = urlparse(url).path
-                    base = f"{folder}_{os.path.basename(path) or (f'file_{i}.jpg' if i is not None else 'file.jpg')}"
-                    arcname = os.path.join(folder, base)
-                    return (arcname, res.content)
-                except Exception as ex:
-                    print(f"[multi] 실패 {url}: {ex}")
-                    return None
-                finally:
-                    done += 1
-                    progress_data["percent"] = int(done / max(1, total) * 100)
-
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                results = list(executor.map(fetch_content, expanded))
-
-            # ✅ thread-safe: 메인 스레드에서 ZIP 기록
-            zip_buffer = BytesIO()
-            with ZipFile(zip_buffer, 'w') as zipf:
-                for result in results:
-                    if result:
-                        arcname, content = result
-                        zipf.writestr(arcname, content)
-
-            with open(zip_path, "wb") as f:
-                f.write(zip_buffer.getvalue())
             progress_data["percent"] = 100
 
         Thread(target=multi_download, args=(urls_list, s, e, max_workers)).start()
@@ -201,8 +191,7 @@ def start_download():
                     progress_data["percent"] = int((done_images[0] / total_images) * 100)
 
             with ThreadPoolExecutor(max_workers=max_workers_val) as executor:
-                futures = {executor.submit(fetch, url, i): i for i, url in enumerate(urls, start=start)}
-                for _ in as_completed(futures):
+                for _ in executor.map(fetch, urls, range(start, end+1)):
                     pass
 
             zip_path = os.path.join("static", zipname)
