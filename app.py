@@ -9,7 +9,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__)
 progress_data = {"percent": 0}
-expected_zips = []
 
 @app.route('/')
 def index():
@@ -17,10 +16,14 @@ def index():
 
 @app.route('/expected-zips')
 def expected():
+    global expected_zips
     return jsonify({"zips": expected_zips})
 
 @app.route('/start-download', methods=['POST'])
 def start_download():
+    global expected_zips
+    expected_zips = []
+
     max_workers = request.form.get('max_workers', '').strip()
     try:
         max_workers = int(max_workers)
@@ -47,8 +50,6 @@ def start_download():
         if not zipname.lower().endswith('.zip'):
             zipname += '.zip'
 
-        # ✅ global 선언 먼저
-        global expected_zips
         expected_zips = [zipname]
 
         def multi_download(urls, start, end, workers):
@@ -148,9 +149,8 @@ def start_download():
             "zipname": zn
         })
 
-    os.makedirs("static", exist_ok=True)
-    global expected_zips
     expected_zips = [t["zipname"] for t in tasks]
+    os.makedirs("static", exist_ok=True)
 
     def download_and_zip_all(tasks_local, max_workers_val):
         headers = {"User-Agent": "Mozilla/5.0"}
