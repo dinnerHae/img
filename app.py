@@ -21,6 +21,8 @@ def expected():
 
 @app.route('/start-download', methods=['POST'])
 def start_download():
+    global expected_zips   # ✅ 최상단에 global 선언 이동
+
     # 공통: 동시 작업자 파싱
     max_workers = request.form.get('max_workers', '').strip()
     try:
@@ -49,20 +51,15 @@ def start_download():
         if not zipname.lower().endswith('.zip'):
             zipname += '.zip'
 
-        # 예상 ZIP 갱신 - 반드시 global 먼저 선언
-        global expected_zips
-        expected_zips = [zipname]
+        expected_zips = [zipname]  # 이제 정상 인식됨
 
         def multi_download(urls, start, end, workers):
-            # 헤더 구성
             headers = {"User-Agent": "Mozilla/5.0"}
             if referer: headers["Referer"] = referer
             if cookie: headers["Cookie"] = cookie
 
-            # 전체 작업 개수 계산 (### 유무에 따라)
             expanded = []
             for site in urls:
-                # 스킴 보정
                 if not site.startswith('http'):
                     site = 'https://' + site
                 if '###' in site and start <= end:
@@ -77,45 +74,37 @@ def start_download():
             os.makedirs("static", exist_ok=True)
             zip_path = os.path.join("static", zipname)
 
-            # 각 요청을 받아 zip에 즉시 기록
             def fetch_pack(item):
                 nonlocal done
                 site, i = item
-                # 도메인 폴더 결정
                 parsed = urlparse(site)
                 netloc = parsed.netloc or parsed.path.split('/')[0]
                 folder = netloc.replace(':', '_')
-                # 개별 URL
                 url = site.replace('###', str(i)) if i is not None else site
                 try:
                     res = requests.get(url, headers=headers, timeout=15)
                     res.raise_for_status()
                     path = urlparse(url).path
                     base = os.path.basename(path) or (f"file_{i}.jpg" if i is not None else "file.jpg")
-                    # in-memory로 반환
                     content = res.content
                     return (folder, base, content)
-                except Exception as ex:
-                    # 실패 시 None 반환
+                except Exception:
                     return None
                 finally:
                     done += 1
                     progress_data["percent"] = int(done / max(1, total) * 100)
 
-            # 병렬 요청 후 zip 쓰기
             zip_buffer = BytesIO()
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 results = list(executor.map(fetch_pack, expanded))
 
             with ZipFile(zip_buffer, 'w') as zipf:
                 for r in results:
-                    if not r: 
+                    if not r:
                         continue
                     folder, base, content = r
-                    arcname = os.path.join(folder, base)
-                    zipf.writestr(arcname, content)
+                    zipf.writestr(os.path.join(folder, base), content)
 
-            # 최종 zip 저장
             with open(zip_path, "wb") as f:
                 f.write(zip_buffer.getvalue())
 
@@ -130,7 +119,6 @@ def start_download():
     ends = request.form.getlist('end[]')
     zipnames = request.form.getlist('zipname[]')
 
-    # 빈 경우 폴백 (원본의 단일 필드 처리 호환)
     if not url_formats:
         uf = request.form.get('url_format', '').strip()
         st = request.form.get('start', '').strip()
@@ -168,7 +156,6 @@ def start_download():
 
     os.makedirs("static", exist_ok=True)
 
-    global expected_zips
     expected_zips = [t["zipname"] for t in tasks]
 
     def download_and_zip_all(tasks_local, max_workers_val):
