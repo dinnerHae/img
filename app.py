@@ -73,31 +73,37 @@ def start_download():
             os.makedirs("static", exist_ok=True)
             zip_path = os.path.join("static", zipname)
 
+            def fetch_content(item):
+                nonlocal done
+                site, i = item
+                parsed = urlparse(site)
+                netloc = parsed.netloc or parsed.path.split('/')[0]
+                folder = netloc.replace(':', '_').replace('/', '_')
+                url = site.replace('###', str(i)) if i is not None else site
+                try:
+                    res = requests.get(url, headers=headers, timeout=15)
+                    res.raise_for_status()
+                    path = urlparse(url).path
+                    base = f"{folder}_{os.path.basename(path) or (f'file_{i}.jpg' if i is not None else 'file.jpg')}"
+                    arcname = os.path.join(folder, base)
+                    return (arcname, res.content)
+                except Exception as ex:
+                    print(f"[multi] 실패 {url}: {ex}")
+                    return None
+                finally:
+                    done += 1
+                    progress_data["percent"] = int(done / max(1, total) * 100)
+
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                results = list(executor.map(fetch_content, expanded))
+
+            # ✅ thread-safe: 메인 스레드에서 ZIP 기록
             zip_buffer = BytesIO()
             with ZipFile(zip_buffer, 'w') as zipf:
-                def fetch_and_write(item):
-                    nonlocal done
-                    site, i = item
-                    parsed = urlparse(site)
-                    netloc = parsed.netloc or parsed.path.split('/')[0]
-                    folder = netloc.replace(':', '_').replace('/', '_')
-                    url = site.replace('###', str(i)) if i is not None else site
-                    try:
-                        res = requests.get(url, headers=headers, timeout=15)
-                        res.raise_for_status()
-                        path = urlparse(url).path
-                        # 안전한 파일명 (중복방지 + 폴더명 prefix)
-                        base = f"{folder}_{os.path.basename(path) or (f'file_{i}.jpg' if i is not None else 'file.jpg')}"
-                        arcname = os.path.join(folder, base)
-                        zipf.writestr(arcname, res.content)
-                    except Exception as ex:
-                        print(f"[multi] 실패 {url}: {ex}")
-                    finally:
-                        done += 1
-                        progress_data["percent"] = int(done / max(1, total) * 100)
-
-                with ThreadPoolExecutor(max_workers=workers) as executor:
-                    executor.map(fetch_and_write, expanded)
+                for result in results:
+                    if result:
+                        arcname, content = result
+                        zipf.writestr(arcname, content)
 
             with open(zip_path, "wb") as f:
                 f.write(zip_buffer.getvalue())
