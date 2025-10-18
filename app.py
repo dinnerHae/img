@@ -49,7 +49,7 @@ def start_download():
         if not zipname.lower().endswith('.zip'):
             zipname += '.zip'
 
-        # 예상 ZIP 갱신
+        # 예상 ZIP 갱신 - 반드시 global 먼저 선언
         global expected_zips
         expected_zips = [zipname]
 
