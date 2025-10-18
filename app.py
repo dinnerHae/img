@@ -47,6 +47,7 @@ def start_download():
         if not zipname.lower().endswith('.zip'):
             zipname += '.zip'
 
+        # ✅ global 선언 먼저
         global expected_zips
         expected_zips = [zipname]
 
