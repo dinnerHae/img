@@ -3,6 +3,7 @@ import os
 import requests
 from zipfile import ZipFile
 from urllib.parse import urlparse
+from io import BytesIO
 from threading import Thread
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -20,8 +21,6 @@ def expected():
 
 @app.route('/start-download', methods=['POST'])
 def start_download():
-    global expected_zips
-
     max_workers = request.form.get('max_workers', '').strip()
     try:
         max_workers = int(max_workers)
@@ -30,7 +29,7 @@ def start_download():
     except Exception:
         max_workers = 5
 
-    # 다중 주소 다운로드
+    # === 다중 주소 처리 ===
     multi_urls_raw = (request.form.get('multi_urls') or '').strip()
     if multi_urls_raw:
         urls_list = [u.strip() for u in multi_urls_raw.split(',') if u.strip()]
@@ -48,6 +47,7 @@ def start_download():
         if not zipname.lower().endswith('.zip'):
             zipname += '.zip'
 
+        global expected_zips
         expected_zips = [zipname]
 
         def multi_download(urls, start, end, workers):
@@ -55,16 +55,12 @@ def start_download():
             if referer: headers["Referer"] = referer
             if cookie: headers["Cookie"] = cookie
 
-            static_dir = os.path.join(os.path.dirname(__file__), "static")
-            os.makedirs(static_dir, exist_ok=True)
-            zip_path = os.path.join(static_dir, zipname)
-
             expanded = []
             for site in urls:
                 if not site.startswith('http'):
                     site = 'https://' + site
                 if '###' in site and start <= end:
-                    for i in range(start, end + 1):
+                    for i in range(start, end+1):
                         expanded.append((site, i))
                 else:
                     expanded.append((site, None))
@@ -72,51 +68,42 @@ def start_download():
             total = len(expanded)
             done = 0
             progress_data["percent"] = 0
+            os.makedirs("static", exist_ok=True)
+            zip_path = os.path.join("static", zipname)
 
-            def fetch_pack(item):
-                nonlocal done
-                site, i = item
-                parsed = urlparse(site)
-                netloc = parsed.netloc or parsed.path.split('/')[0]
-                folder = netloc.replace(':', '_')
-                url = site.replace('###', str(i)) if i is not None else site
-                try:
-                    res = requests.get(url, headers=headers, timeout=15)
-                    res.raise_for_status()
-                    path = urlparse(url).path
-                    base = os.path.basename(path) or (f"file_{i}.jpg" if i is not None else "file.jpg")
-                    temp_file = os.path.join(static_dir, f"_temp_{os.getpid()}_{base}")
-                    with open(temp_file, "wb") as tf:
-                        tf.write(res.content)
-                    return (folder, base, temp_file)
-                except Exception:
-                    return None
-                finally:
-                    done += 1
-                    progress_data["percent"] = int(done / max(1, total) * 100)
-
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                results = list(executor.map(fetch_pack, expanded))
-
-            # ZIP을 디스크에 직접 생성 (메모리 절약)
-            with ZipFile(zip_path, 'w') as zipf:
-                for r in results:
-                    if not r:
-                        continue
-                    folder, base, temp_file = r
-                    arcname = os.path.join(folder, base)
-                    zipf.write(temp_file, arcname=arcname)
+            zip_buffer = BytesIO()
+            with ZipFile(zip_buffer, 'w') as zipf:
+                def fetch_and_write(item):
+                    nonlocal done
+                    site, i = item
+                    parsed = urlparse(site)
+                    netloc = parsed.netloc or parsed.path.split('/')[0]
+                    folder = netloc.replace(':', '_')
+                    url = site.replace('###', str(i)) if i is not None else site
                     try:
-                        os.remove(temp_file)
-                    except Exception:
-                        pass
+                        res = requests.get(url, headers=headers, timeout=15)
+                        res.raise_for_status()
+                        path = urlparse(url).path
+                        base = os.path.basename(path) or (f"file_{i}.jpg" if i is not None else "file.jpg")
+                        arcname = os.path.join(folder, base)
+                        zipf.writestr(arcname, res.content)
+                    except Exception as ex:
+                        print(f"[multi] 실패 {url}: {ex}")
+                    finally:
+                        done += 1
+                        progress_data["percent"] = int(done / max(1, total) * 100)
 
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    executor.map(fetch_and_write, expanded)
+
+            with open(zip_path, "wb") as f:
+                f.write(zip_buffer.getvalue())
             progress_data["percent"] = 100
 
         Thread(target=multi_download, args=(urls_list, s, e, max_workers)).start()
         return '', 204
 
-    # 기존 다중 작업 카드
+    # === 기존 기능 (단일 or 여러 작업 카드) ===
     url_formats = request.form.getlist('url_format[]')
     starts = request.form.getlist('start[]')
     ends = request.form.getlist('end[]')
@@ -128,7 +115,10 @@ def start_download():
         en = request.form.get('end', '').strip()
         zn = request.form.get('zipname', '').strip()
         if uf and st and en:
-            url_formats = [uf]; starts = [st]; ends = [en]; zipnames = [zn]
+            url_formats = [uf]
+            starts = [st]
+            ends = [en]
+            zipnames = [zn]
 
     tasks = []
     for i in range(len(url_formats)):
@@ -158,6 +148,7 @@ def start_download():
         })
 
     os.makedirs("static", exist_ok=True)
+    global expected_zips
     expected_zips = [t["zipname"] for t in tasks]
 
     def download_and_zip_all(tasks_local, max_workers_val):
@@ -166,35 +157,65 @@ def start_download():
         done_images = [0]
         progress_data["percent"] = 0
 
+        if total_images <= 0 or not tasks_local:
+            progress_data["percent"] = 100
+            return
+
         for t in tasks_local:
-            folder = f"task_{t['idx']}"
+            url_format = t["url_format"]
+            start = t["start"]
+            end = t["end"]
+            idx = t["idx"]
+            zipname = t["zipname"]
+            if not url_format.startswith("http"):
+                url_format = "https://" + url_format
+
+            folder = f"downloaded_images_task{idx}"
             os.makedirs(folder, exist_ok=True)
-            urls = [t["url_format"].replace("###", str(i)) for i in range(t["start"], t["end"]+1)]
-            zip_path = os.path.join("static", t["zipname"])
 
-            with ZipFile(zip_path, 'w') as zipf:
-                def fetch(url, i):
-                    try:
-                        res = requests.get(url, headers=headers, timeout=10)
-                        res.raise_for_status()
-                        path = urlparse(url).path
-                        ext = os.path.splitext(path)[1] or ".jpg"
-                        filename = f"{i}{ext}"
-                        temp = os.path.join(folder, filename)
-                        with open(temp, "wb") as f:
-                            f.write(res.content)
-                        zipf.write(temp, arcname=filename)
-                        os.remove(temp)
-                    except Exception as e:
-                        print(f"[task{t['idx']}] 실패 {url}: {e}")
-                    finally:
-                        done_images[0] += 1
-                        progress_data["percent"] = int((done_images[0] / total_images) * 100)
+            urls = [url_format.replace("###", str(i)) for i in range(start, end+1)]
 
-                with ThreadPoolExecutor(max_workers=max_workers_val) as executor:
-                    list(executor.map(fetch, urls, range(t["start"], t["end"]+1)))
+            def fetch(url, i):
+                try:
+                    res = requests.get(url, headers=headers, timeout=10)
+                    res.raise_for_status()
+                    path = urlparse(url).path
+                    ext = os.path.splitext(path)[1].lower().replace(".", "")
+                    if ext not in ["jpg", "jpeg", "png", "gif", "webp", "bmp"]:
+                        ext = "jpg"
+                    filename = f"{i}.{ext}"
+                    with open(os.path.join(folder, filename), "wb") as f:
+                        f.write(res.content)
+                except Exception as e:
+                    print(f"[task{idx}] 실패 {url}: {e}")
+                finally:
+                    done_images[0] += 1
+                    progress_data["percent"] = int((done_images[0] / total_images) * 100)
 
-            os.rmdir(folder)
+            with ThreadPoolExecutor(max_workers=max_workers_val) as executor:
+                futures = {executor.submit(fetch, url, i): i for i, url in enumerate(urls, start=start)}
+                for _ in as_completed(futures):
+                    pass
+
+            zip_path = os.path.join("static", zipname)
+            zip_buffer = BytesIO()
+            with ZipFile(zip_buffer, 'w') as zipf:
+                for file in sorted(os.listdir(folder)):
+                    zipf.write(os.path.join(folder, file), arcname=file)
+            zip_buffer.seek(0)
+            with open(zip_path, "wb") as f:
+                f.write(zip_buffer.read())
+
+            for file in os.listdir(folder):
+                try:
+                    os.remove(os.path.join(folder, file))
+                except Exception:
+                    pass
+            try:
+                os.rmdir(folder)
+            except Exception:
+                pass
+
         progress_data["percent"] = 100
 
     Thread(target=download_and_zip_all, args=(tasks, max_workers)).start()
