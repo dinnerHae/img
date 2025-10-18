@@ -66,6 +66,25 @@
       </div>
       <div class="hint">※ 주소는 반드시 ### 를 포함해야 합니다.</div>
       <div id="error" class="error"></div>
+
+      <hr style="margin:30px 0;">
+      <h3>🌐 다중 주소 다운로드 (각 사이트별 폴더 생성)</h3>
+      <label>주소 여러 개 입력 (쉼표로 구분)</label>
+      <textarea name="multi_urls" placeholder="예: https://a.com/img###.jpg, https://b.com/path/file###.png"></textarea>
+      <label>시작 숫자</label>
+      <input type="number" name="multi_start" />
+      <label>끝 숫자</label>
+      <input type="number" name="multi_end" />
+      <label>Referer (선택)</label>
+      <input type="text" name="multi_referer" placeholder="예: https://example.com/viewer" />
+      <label>Cookie (선택)</label>
+      <input type="text" name="multi_cookie" placeholder="예: sessionid=12345; token=abcd" />
+      <label>ZIP 파일명 (선택)</label>
+      <input type="text" name="multi_zipname" placeholder="예: multi_sites.zip" />
+      <div class="hint">※ 다중 주소가 입력되면 ZIP 내부에 각 도메인별 폴더로 저장됩니다.</div>
+      <div class="actions" style="margin-top:16px;">
+        <button type="submit" style="background:#28a745;">다중 주소 다운로드 시작</button>
+      </div>
     </form>
 
     <div id="progress-container">
@@ -97,7 +116,7 @@
         }
       }
 
-      function makeTaskCard(values) {
+      function makeTaskCard() {
         var div = document.createElement('div');
         div.className = 'task';
         div.innerHTML =
@@ -118,28 +137,11 @@
           '<label>ZIP 파일명 (선택, 예: mypics)</label>' +
           '<input type="text" name="zipname[]" placeholder="비워두면 result_taskN.zip, .zip은 자동으로 붙음" />' +
           '<div class="actions"><button type="button" class="danger remove-btn">- 제거</button></div>';
-
-        if (values) {
-          var inputs = div.querySelectorAll('input, textarea');
-          for (var i = 0; i < inputs.length; i++) {
-            var name = inputs[i].getAttribute('name');
-            if (values[name] !== undefined) inputs[i].value = values[name];
-          }
-        }
         return div;
       }
 
       addBtn.addEventListener('click', function(){
-        var lastTask = tasksEl.lastElementChild;
-        var prevValues = {};
-        if (lastTask) {
-          var inputs = lastTask.querySelectorAll('input, textarea');
-          for (var i = 0; i < inputs.length; i++) {
-            prevValues[inputs[i].name] = inputs[i].value;
-          }
-        }
-        var card = makeTaskCard(prevValues);
-        tasksEl.appendChild(card);
+        tasksEl.appendChild(makeTaskCard());
         renumberTasks();
       });
 
@@ -194,15 +196,11 @@
       form.addEventListener('submit', function(e){
         e.preventDefault();
         errorBox.style.display = 'none';
-        errorBox.textContent = '';
         progressContainer.style.display = 'block';
         progressBar.value = 0;
         progressText.textContent = '0%';
         downloadList.style.display = 'none';
-        downloadList.innerHTML = '';
-
         var formData = new FormData(form);
-
         fetch('/start-download', { method: 'POST', body: formData })
           .then(function(res){
             if (!res.ok) throw new Error('요청 실패: ' + res.status);
@@ -220,4 +218,3 @@
   </script>
 </body>
 </html>
-
